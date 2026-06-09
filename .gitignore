@@ -1,0 +1,32 @@
+# Compiled JS (TypeScript project — only keep known hand-written JS files)
+*.js
+!deploy/scripts/*.js
+app/**/*.js
+*.d.ts
+
+# Node modules
+node_modules/
+
+# Build / deploy output
+build/
+artifacts/
+out/simulator/events/*
+!out/simulator/events/empty.json
+
+# Test reports
+__test_reports__/
+
+# Environment files (actual secrets — *.example files are committed)
+.env
+envs/.env
+envs/.env.e2e
+envs/*.env
+!envs/.env.e2e.example
+
+# OS / IDE
+.DS_Store
+.idea
+
+# .github runtime context (AI-generated state, not config)
+.github/brain/contexts/*.md
+!.github/brain/contexts/*.template.md

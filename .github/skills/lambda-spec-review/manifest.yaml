@@ -1,0 +1,10 @@
+name: lambda-spec-review
+version: 1.0.0
+description: Verify Lambda implementation matches the PBI spec — compare source code against documented requirements.
+input: /lambda-spec-review {path-to-spec.md} [{lambda-name}]
+output: Spec compliance report (requirements vs code, architecture checks)
+script: none
+templates: templates/*
+context_budget: none
+prev_skill: lambda-event-impl
+next_skill: lambda-generate-unit-tests

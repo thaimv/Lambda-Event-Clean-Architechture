@@ -1,0 +1,10 @@
+name: lambda-event-design
+version: 1.0.0
+description: Generate a Lambda function detail design document for LambdaEvents.
+input: /lambda-event-design {path-to-spec.md | description}
+output: Detail design at document/detail-designs/lambdas/<name>/index.md
+script: none
+templates: none
+context_budget: none
+prev_skill: none
+next_skill: lambda-event-impl

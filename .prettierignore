@@ -1,0 +1,14 @@
+# Build / deploy output
+build/
+artifacts/
+out/
+
+# Test reports
+__test_reports__/
+
+# AI agent config / skill templates (not product source)
+.github/**/*.ts
+.cursor/**/*.ts
+
+# Dependencies
+node_modules/

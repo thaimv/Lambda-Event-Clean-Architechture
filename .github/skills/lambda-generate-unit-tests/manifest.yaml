@@ -1,0 +1,10 @@
+name: lambda-generate-unit-tests
+version: 1.0.0
+description: Generate Vitest unit tests for all layers (presenter, use case, repository) of a Lambda function.
+input: /lambda-generate-unit-tests {lambda-name}
+output: Unit test files under app/lambda/test/<lambda-name>/
+script: none
+templates: templates/*
+context_budget: none
+prev_skill: lambda-event-impl
+next_skill: lambda-generate-event-tests

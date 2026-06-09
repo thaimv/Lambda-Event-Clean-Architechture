@@ -1,0 +1,12 @@
+name: _template
+version: 1.0.0
+description: Template for creating a new LambdaEvents agent skill. Copy this folder and rename.
+input: /{skill-name} {argument}
+output: none
+script: none
+templates: none
+context_budget: none
+# prev_skill / next_skill: use `none`, a single skill name, or a YAML list for multiple paths
+# Example: prev_skill: [lambda-event-impl]
+prev_skill: none
+next_skill: none

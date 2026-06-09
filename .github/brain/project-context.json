@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "generated_at": "2026-06-14T21:15:00+07:00",
+  "project": {
+    "name": "LambdaEvents",
+    "root": "app/lambda",
+    "purpose": "Event-driven standalone Lambda functions — each Lambda is fully self-contained with its own module, presenter, repos, and use cases"
+  },
+  "repo_layout": {
+    "kind": "standalone-per-function",
+    "source_root": "app/lambda/src",
+    "test_root": "app/lambda/test",
+    "e2e_test_root": "tests/e2e",
+    "areas": {
+      "lambda_functions": ["delete-user", "jwt-authorizer"],
+      "infrastructure": [
+        "app/lambda/src/common/datasources",
+        "app/lambda/src/common/errors",
+        "app/lambda/src/common/lambda",
+        "app/lambda/src/config/di"
+      ]
+    }
+  },
+  "stack": {
+    "languages": ["TypeScript"],
+    "frameworks": ["InversifyJS", "Prisma", "Zod", "Vitest", "AWS Lambda"],
+    "databases": {
+      "relational": "Aurora PostgreSQL (via Prisma — shared layer)",
+      "nosql": "DynamoDB (via @aws-sdk/lib-dynamodb)",
+      "cache": "ElastiCache / Valkey (via @valkey/valkey-glide)"
+    },
+    "aws_services": [
+      "API Gateway",
+      "Cognito",
+      "SQS",
+      "SNS",
+      "SES",
+      "S3",
+      "GCS",
+      "StepFunctions",
+      "Athena",
+      "CloudWatch Metrics",
+      "Secrets Manager",
+      "Lambda (invoke)"
+    ],
+    "package_manager": "npm",
+    "node": ">=22.0.0"
+  },
+  "capabilities": {
+    "host": "github",
+    "github_mcp": true,
+    "gitlab_mcp": false,
+    "azure_devops_mcp": false,
+    "eslint": true,
+    "prettier": true
+  },
+  "path_aliases": {
+    "@common/*": "app/lambda/src/common/*",
+    "@lambda/*": "app/lambda/src/*"
+  },
+  "commands": {
+    "build": "npm run build (tsc — TypeScript compile check)",
+    "build:lambdas": "bash deploy/scripts/003_build-lambdas-from-config.sh @deploy/lambdas.config.json",
+    "build:delete-user": "node deploy/scripts/bundle.js delete-user",
+    "build:jwt-authorizer": "node deploy/scripts/bundle.js jwt-authorizer",
+    "lint": "npm run lint:ci (lint:test + lint:exclude_test)",
+    "format:ci": "prettier . --check",
+    "test": "vitest -c vitest.config.mjs (watch mode)",
+    "test:ci": "vitest run -c vitest.config.mjs --coverage",
+    "test:e2e": "vitest -c vitest-e2e.config.mjs",
+    "test:e2e:ci": "vitest run -c vitest-e2e.config.mjs"
+  },
+  "key_files": {
+    "di_bootstrap": "app/lambda/src/config/di/di.config.ts",
+    "di_tokens": "app/lambda/src/common/constants/di.const.ts",
+    "app_config": "app/lambda/src/config/app.config.ts",
+    "lambda_class": "app/lambda/src/common/lambda/lambda.ts",
+    "prisma_schema": "app/lambda/layer/prisma/schema.prisma"
+  },
+  "lambda_pattern": {
+    "entry": "app/lambda/src/<name>/index.ts",
+    "module": "app/lambda/src/<name>/module.ts",
+    "presenter": "app/lambda/src/<name>/presenter/index.presenter.ts",
+    "consts": "app/lambda/src/<name>/consts.ts",
+    "bootstrap": "bootstrapApplication(<Name>Module) + getInstance<Presenter>(DI_CONST.Presenter).handle(event)"
+  },
+  "lambdas": {
+    "delete-user": {
+      "trigger": "APIGatewayProxyEvent",
+      "purpose": "Batch cleanup — permanently delete soft-deleted user records older than DELETE_USER_SOFT_DELETE_RETENTION_YEARS",
+      "datasources": ["database (Prisma)"],
+      "has_tests": true
+    },
+    "jwt-authorizer": {
+      "trigger": "APIGatewayRequestAuthorizerEvent",
+      "purpose": "API Gateway custom authorizer — verifies JWT token from cookie, returns IAM policy",
+      "datasources": ["cache (Valkey/ElastiCache)", "jwks (external HTTP)"],
+      "has_tests": true
+    }
+  }
+}

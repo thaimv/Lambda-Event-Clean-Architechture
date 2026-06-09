@@ -1,0 +1,157 @@
+name: LambdaEvents CD — Deploy ElastiCache Layer
+
+on:
+  workflow_call:
+    inputs:
+      target_env:
+        description: GitHub Environment name
+        required: true
+        type: string
+      elasticache_layer_zip:
+        description: ElastiCache layer zip filename
+        required: true
+        type: string
+      keep_layer_versions:
+        description: Number of published layer versions to retain
+        required: false
+        type: string
+        default: '5'
+
+jobs:
+  deploy-elasticache-layer:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    environment: ${{ inputs.target_env }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Compute ElastiCache layer fingerprint
+        id: fingerprint
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          VALKEY_GLIDE=$(grep -A3 '"node_modules/@valkey/valkey-glide":' package-lock.json \
+            | grep '"version"' | head -1 | sed -E 's/.*"version": "([^"]+)".*/\1/')
+          VALKEY_LINUX=$(grep -A3 '"node_modules/@valkey/valkey-glide-linux-x64-gnu":' app/lambda/layer/elasticache/package-lock.json 2>/dev/null \
+            | grep '"version"' | head -1 | sed -E 's/.*"version": "([^"]+)".*/\1/' || echo "none")
+
+          FINGERPRINT="valkey-glide=${VALKEY_GLIDE}|linux-gnu=${VALKEY_LINUX}"
+          echo "ElastiCache layer fingerprint: ${FINGERPRINT}"
+          echo "fingerprint=${FINGERPRINT}" >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Decide whether ElastiCache layer deploy is needed
+        id: detect
+        shell: bash
+        env:
+          ELASTICACHE_LAYER_NAME: ${{ vars.ELASTICACHE_LAYER_NAME }}
+          FINGERPRINT: ${{ steps.fingerprint.outputs.fingerprint }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${ELASTICACHE_LAYER_NAME}" ]]; then
+            echo "ELASTICACHE_LAYER_NAME is not set on GitHub Environment — skip ElastiCache layer deploy."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          DEPLOYED_FINGERPRINT=$(aws lambda list-layer-versions \
+            --layer-name "${ELASTICACHE_LAYER_NAME}" \
+            --max-items 1 \
+            --query 'LayerVersions[0].Description' \
+            --output text 2>/dev/null || echo "none")
+
+          if [[ "${DEPLOYED_FINGERPRINT}" == "None" || -z "${DEPLOYED_FINGERPRINT}" ]]; then
+            DEPLOYED_FINGERPRINT="none"
+          fi
+
+          echo "Deployed layer fingerprint: ${DEPLOYED_FINGERPRINT}"
+
+          if [[ "${FINGERPRINT}" == "${DEPLOYED_FINGERPRINT}" ]]; then
+            echo "ElastiCache layer already matches fingerprint — skip deploy."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ElastiCache layer fingerprint changed — deploy required."
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install system tools (zip, curl)
+        if: steps.detect.outputs.changed == 'true'
+        run: sudo apt-get update -y && sudo apt-get install -y zip curl
+
+      - name: Prepare ElastiCache Lambda layer
+        if: steps.detect.outputs.changed == 'true'
+        run: bash deploy/scripts/002_prepare-elasticache-layer.sh
+
+      - name: Publish ElastiCache layer and attach to Lambdas
+        if: steps.detect.outputs.changed == 'true'
+        shell: bash
+        env:
+          ELASTICACHE_LAYER_NAME: ${{ vars.ELASTICACHE_LAYER_NAME }}
+          LAMBDA_FUNCTION_JWT_AUTHORIZER_NAME: ${{ vars.LAMBDA_FUNCTION_JWT_AUTHORIZER_NAME }}
+          FINGERPRINT: ${{ steps.fingerprint.outputs.fingerprint }}
+        run: |
+          set -euo pipefail
+
+          LAYER_ARN=$(aws lambda publish-layer-version \
+            --layer-name "${ELASTICACHE_LAYER_NAME}" \
+            --zip-file "fileb://layers/elasticache/${{ inputs.elasticache_layer_zip }}" \
+            --compatible-runtimes nodejs22.x \
+            --description "${FINGERPRINT}" \
+            --query LayerVersionArn \
+            --output text)
+          echo "Published layer: ${LAYER_ARN}"
+
+          attach_layer() {
+            local function_name="$1"
+            local existing_layers merged=()
+
+            existing_layers=$(aws lambda get-function-configuration \
+              --function-name "${function_name}" \
+              --query 'Layers[].Arn' \
+              --output text 2>/dev/null || true)
+
+            if [[ -n "${existing_layers}" && "${existing_layers}" != "None" ]]; then
+              for arn in ${existing_layers}; do
+                if [[ "${arn}" != *":layer:${ELASTICACHE_LAYER_NAME}:"* ]]; then
+                  merged+=("${arn}")
+                fi
+              done
+            fi
+
+            merged+=("${LAYER_ARN}")
+
+            echo "Attaching ElastiCache layer to ${function_name} ..."
+            aws lambda update-function-configuration \
+              --function-name "${function_name}" \
+              --layers "${merged[@]}"
+            aws lambda wait function-updated \
+              --function-name "${function_name}"
+          }
+
+          if [[ -n "${LAMBDA_FUNCTION_JWT_AUTHORIZER_NAME}" ]]; then
+            attach_layer "${LAMBDA_FUNCTION_JWT_AUTHORIZER_NAME}"
+          fi
+
+      - name: Delete old ElastiCache layer versions
+        if: steps.detect.outputs.changed == 'true'
+        continue-on-error: true
+        shell: bash
+        env:
+          ELASTICACHE_LAYER_NAME: ${{ vars.ELASTICACHE_LAYER_NAME }}
+          KEEP_LAYER_VERSIONS: ${{ inputs.keep_layer_versions }}
+        run: |
+          set -euo pipefail
+          KEEP="${KEEP_LAYER_VERSIONS:-5}"
+          bash deploy/scripts/005_delete-old-layer-versions.sh "${ELASTICACHE_LAYER_NAME}" "${KEEP}"

@@ -1,0 +1,16 @@
+{
+  "name": "elasticache",
+  "version": "1.0.0",
+  "description": "ElastiCache client libraries for Redis/ValKey access",
+  "scripts": {
+    "build": "bash prepare-elasticache.sh",
+    "build:docker": "bash prepare-elasticache-docker.sh"
+  },
+  "dependencies": {
+    "@valkey/valkey-glide": "^2.4.1",
+    "@valkey/valkey-glide-linux-x64-gnu": "^2.4.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

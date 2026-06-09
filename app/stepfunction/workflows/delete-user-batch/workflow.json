@@ -1,0 +1,39 @@
+{
+  "StartAt": "DeleteUser",
+  "QueryLanguage": "JSONata",
+  "States": {
+    "DeleteUser": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Arguments": {
+        "FunctionName": "arn:aws:lambda:__REGION__:__ACCOUNT_ID__:function:__LAMBDA_DELETE_USER__:live",
+        "Payload": {
+          "input": "{% $states.input %}"
+        }
+      },
+      "Assign": {
+        "resultCode": "{% $states.result.Payload.result.code %}"
+      },
+      "Next": "CheckDeleteUserResult"
+    },
+    "CheckDeleteUserResult": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Condition": "{% $resultCode = 'SC-001' %}",
+          "Next": "Success"
+        }
+      ],
+      "Default": "TaskFailed"
+    },
+    "TaskFailed": {
+      "Type": "Fail",
+      "Cause": "{% 'Failed to delete user batch: ' & $resultCode %}",
+      "Error": "TaskError"
+    },
+    "Success": {
+      "Type": "Succeed"
+    }
+  },
+  "TimeoutSeconds": 900
+}

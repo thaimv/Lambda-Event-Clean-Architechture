@@ -1,0 +1,15 @@
+# Exclude build artifacts
+output.zip
+output/
+tmp/
+node_modules/
+nodejs/
+
+# Exclude development files
+*.log
+.DS_Store
+Thumbs.db
+
+# Exclude git files
+.git
+.gitignore

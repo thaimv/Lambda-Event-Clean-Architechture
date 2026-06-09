@@ -1,0 +1,10 @@
+name: lambda-generate-event-tests
+version: 1.0.0
+description: Generate Vitest E2E black-box tests that invoke a deployed Lambda via AWS SDK.
+input: /lambda-generate-event-tests {lambda-name | path-to-design.md | path-to-spec.md}
+output: E2E test file at tests/e2e/event/<lambda-name>.e2e-spec.ts
+script: none
+templates: templates/*
+context_budget: none
+prev_skill: lambda-generate-unit-tests
+next_skill: none

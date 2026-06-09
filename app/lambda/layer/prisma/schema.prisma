@@ -1,0 +1,30 @@
+/// Data model version : v0.0.1
+generator client {
+  provider      = "prisma-client-js"
+  output        = "./node_modules/.prisma/client"
+  binaryTargets = ["native", "rhel-openssl-3.0.x", "debian-openssl-3.0.x"]
+}
+
+generator json {
+  provider = "prisma-json-types-generator"
+}
+
+datasource db {
+  provider     = "postgresql"
+  url          = env("DATABASE_URL")
+  relationMode = "prisma"
+}
+
+model User {
+  cognitoSub     String    @id(map: "user_information_pkc") @map("cognito_sub") @db.VarChar(36)
+  userNickname   String    @map("user_nickname")
+  cognitoId      String?   @map("cognito_id") @db.VarChar(55)
+  createDatetime DateTime  @default(now()) @map("create_datetime") @db.Timestamptz(6)
+  createAuthor   String    @map("create_author") @db.VarChar(36)
+  updateDatetime DateTime  @updatedAt @map("update_datetime") @db.Timestamptz(6)
+  updateAuthor   String    @map("update_author") @db.VarChar(36)
+  deleteDatetime DateTime? @map("delete_datetime") @db.Timestamptz(6)
+  deleteAuthor   String?   @map("delete_author") @db.VarChar(36)
+
+  @@map("users")
+}

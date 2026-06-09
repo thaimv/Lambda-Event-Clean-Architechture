@@ -1,0 +1,107 @@
+name: LambdaEvents CD — Deploy Lambda
+
+on:
+  workflow_call:
+    inputs:
+      target_env:
+        description: GitHub Environment name
+        required: true
+        type: string
+      build_artifact_name:
+        description: Combined artifact name from build job
+        required: true
+        type: string
+      artifact_name:
+        description: Lambda package folder inside the build artifact
+        required: true
+        type: string
+      zip_file:
+        description: Lambda deployment zip filename
+        required: true
+        type: string
+      function_name:
+        description: AWS Lambda function name to deploy
+        required: true
+        type: string
+      alias_name:
+        description: Lambda alias to update after publish
+        required: true
+        type: string
+      keep_lambda_versions:
+        description: Number of published versions to retain
+        required: false
+        type: string
+        default: '5'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    environment: ${{ inputs.target_env }}
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: ${{ inputs.build_artifact_name }}
+          path: artifacts
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Update Lambda code
+        shell: bash
+        env:
+          FUNCTION_NAME: ${{ inputs.function_name }}
+          ZIP_FILE: ${{ inputs.zip_file }}
+          ARTIFACT_NAME: ${{ inputs.artifact_name }}
+        run: |
+          set -euo pipefail
+          aws lambda update-function-code \
+            --function-name "${FUNCTION_NAME}" \
+            --zip-file "fileb://artifacts/${ARTIFACT_NAME}/${ZIP_FILE}"
+          aws lambda wait function-updated \
+            --function-name "${FUNCTION_NAME}"
+
+      - name: Publish version and update alias
+        shell: bash
+        env:
+          FUNCTION_NAME: ${{ inputs.function_name }}
+          ALIAS_NAME: ${{ inputs.alias_name }}
+        run: |
+          set -euo pipefail
+          NEW_VERSION=$(aws lambda publish-version \
+            --function-name "${FUNCTION_NAME}" \
+            --query 'Version' --output text)
+          aws lambda update-alias \
+            --function-name "${FUNCTION_NAME}" \
+            --name "${ALIAS_NAME}" \
+            --function-version "$NEW_VERSION"
+
+      - name: Delete old Lambda versions
+        continue-on-error: true
+        shell: bash
+        env:
+          FUNCTION_NAME: ${{ inputs.function_name }}
+          KEEP_LAMBDA_VERSIONS: ${{ inputs.keep_lambda_versions }}
+        run: |
+          set -euo pipefail
+          KEEP="${KEEP_LAMBDA_VERSIONS:-5}"
+          VERSIONS_TO_DELETE=$(aws lambda list-versions-by-function \
+            --function-name "${FUNCTION_NAME}" \
+            --query "reverse(sort_by(Versions[?Version != '\$LATEST'], &to_number(Version)))[${KEEP}:].Version" \
+            --output text)
+
+          if [[ -z "$VERSIONS_TO_DELETE" || "$VERSIONS_TO_DELETE" == "None" ]]; then
+            exit 0
+          fi
+
+          for VERSION in $VERSIONS_TO_DELETE; do
+            aws lambda delete-function \
+              --function-name "${FUNCTION_NAME}" \
+              --qualifier "$VERSION"
+          done

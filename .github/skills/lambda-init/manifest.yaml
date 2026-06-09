@@ -1,0 +1,10 @@
+name: lambda-init
+version: 1.0.0
+description: Initialize or verify project context — scan Lambda functions, check MCP, verify prerequisites.
+input: /lambda-init [--check]
+output: .github/brain/project-context.json (full scan) or drift/MCP report (--check)
+script: none
+templates: none
+context_budget: none
+prev_skill: none
+next_skill: none

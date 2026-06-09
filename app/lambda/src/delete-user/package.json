@@ -1,0 +1,11 @@
+{
+  "name": "delete-user",
+  "version": "1.0.0",
+  "main": "index.ts",
+  "dependencies": {
+    "@aws-lambda-powertools/logger": "^2.9.0"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.145"
+  }
+}

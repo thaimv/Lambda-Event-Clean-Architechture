@@ -1,0 +1,10 @@
+name: lambda-pr-review
+version: 1.0.0
+description: Review a PR/MR from GitHub, GitLab, or Azure DevOps — fetch, analyze, layered review, push comments.
+input: /lambda-pr-review {PR_ID} [--context "hint"] [--auto_push=true|false]
+output: Review report and inline PR/MR comments
+script: none
+templates: templates/*
+context_budget: none
+prev_skill: none
+next_skill: none

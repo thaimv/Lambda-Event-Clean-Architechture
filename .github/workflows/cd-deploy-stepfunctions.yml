@@ -1,0 +1,40 @@
+name: LambdaEvents CD — Deploy Step Functions
+
+on:
+  workflow_call:
+    inputs:
+      target_env:
+        description: GitHub Environment name
+        required: true
+        type: string
+      stepfunctions_config:
+        description: JSON array of Step Function deploy definitions
+        required: true
+        type: string
+
+jobs:
+  deploy-stepfunctions:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    environment: ${{ inputs.target_env }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Install system tools (jq)
+        run: sudo apt-get update -y && sudo apt-get install -y jq
+
+      - name: Deploy Step Functions
+        shell: bash
+        env:
+          AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          STEPFUNCTIONS_CONFIG: ${{ inputs.stepfunctions_config }}
+        run: bash deploy/scripts/006_deploy-stepfunctions-from-config.sh "${STEPFUNCTIONS_CONFIG}"

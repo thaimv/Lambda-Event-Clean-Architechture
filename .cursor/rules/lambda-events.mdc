@@ -1,0 +1,34 @@
+---
+description: LambdaEvents — agent constitution, .github kit navigation, and naming conventions
+alwaysApply: true
+---
+
+# LambdaEvents (Cursor)
+
+Read `.github/cursor-instructions.md` and `.github/copilot-instructions.md` for full context.
+
+## Skills (Cursor)
+
+Workflows live in `.github/skills/` and are exposed to Cursor via symlinks in `.cursor/skills/`. Cursor auto-discovers skills from `SKILL.md` frontmatter — there are no `/lambda-*` slash commands. Match the user's task to a skill; at workflow Step 1 read `manifest.yaml`, then follow `workflow.md`.
+
+## Before implementing
+
+1. Read `.github/brain/project-context.json` for lambdas, commands, stack.
+2. For Lambda work, apply the matching skill from `.cursor/skills/` (design → impl → tests).
+3. Follow `.github/rules/architecture.md`, `typescript-coding-standards.md`, `testing-strategy.md` (+ `e2e-testing-aspects.md`, `e2e-testing-best-practices.md` for E2E).
+
+## Naming (DI)
+
+- Datasource DI module class: `{Name}DatasourceModule` in `app/lambda/src/config/di/datasources/*.di.ts`
+- Datasource implementation: `{Name}Datasource` in `app/lambda/src/common/datasources/**/implements/`
+- Common user repo DI module: `CommonUserRepo` in `app/lambda/src/config/di/repos/user.di.ts`
+- Per-Lambda module: `{LambdaName}Module` in `app/lambda/src/{lambda-name}/module.ts`
+
+## Errors & tests
+
+- User-facing messages → `ERROR_MESSAGE` in `@common/constants/response.const`
+- Tests under `app/lambda/test/` — follow `.github/rules/testing-strategy.md`
+
+## Safety
+
+Same as `copilot-instructions.md`: no auto-merge, no push without user request, no destructive ops without confirmation.

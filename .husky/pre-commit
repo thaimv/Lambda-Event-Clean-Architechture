@@ -1,0 +1,9 @@
+#!/usr/bin/env sh
+
+# Git / IDE hooks inherit a minimal PATH — npm/node may be missing (nvm, Homebrew).
+if [ -f "$HOME/.nvm/nvm.sh" ]; then
+  . "$HOME/.nvm/nvm.sh"
+fi
+export PATH="/usr/local/bin:/opt/homebrew/bin:$PATH"
+
+npm run lint-staged

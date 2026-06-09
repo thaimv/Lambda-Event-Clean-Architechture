@@ -1,0 +1,39 @@
+name: LambdaEvents CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci && npm i @rollup/rollup-linux-x64-gnu
+
+      - name: Run lint
+        run: npm run lint:ci
+
+      - name: Run format check
+        run: npm run format:ci
+
+      - name: Run unit tests (coverage)
+        run: npm run test:ci
+
+      - name: Upload test report artifact
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: unit-test-report
+          path: __test_reports__/unit-test/
+          if-no-files-found: warn

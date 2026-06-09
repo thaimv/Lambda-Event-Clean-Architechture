@@ -1,0 +1,130 @@
+name: LambdaEvents Review
+
+on:
+  pull_request:
+    branches:
+      - develop
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  ai-review:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: copilot-review-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Copilot CLI
+        run: npm install -g @github/copilot
+
+      - name: Configure GitHub MCP and gh CLI
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p ~/.copilot
+          node <<'NODE'
+          const fs = require('fs');
+          const path = require('path');
+          const token = process.env.GITHUB_TOKEN ?? '';
+          const config = {
+            mcpServers: {
+              github: {
+                type: 'local',
+                command: 'npx',
+                args: ['-y', '@modelcontextprotocol/server-github'],
+                env: { GITHUB_PERSONAL_ACCESS_TOKEN: token },
+                tools: ['*'],
+              },
+            },
+          };
+          fs.writeFileSync(
+            path.join(process.env.HOME, '.copilot', 'mcp-config.json'),
+            JSON.stringify(config, null, 2),
+          );
+          NODE
+          gh auth status || true
+
+      - name: Run Copilot review
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          REVIEW_MAX_ISSUES="${REVIEW_MAX_ISSUES:-10}"
+          export REVIEW_MAX_ISSUES="$REVIEW_MAX_ISSUES"
+          COPILOT_MODEL="${COPILOT_MODEL:-}"
+
+          PR_NUMBER="${{ github.event.pull_request.number || '' }}"
+          if [[ -z "$PR_NUMBER" ]]; then
+            echo "No pull request number found. Skipping review."
+            exit 0
+          fi
+
+          echo "COPILOT_MODEL=${COPILOT_MODEL:-<default>}"
+          echo "REVIEW_MAX_ISSUES=$REVIEW_MAX_ISSUES"
+          echo "PR_NUMBER=$PR_NUMBER"
+
+          TOKENS_RAW="${COPILOT_GITHUB_TOKENS:-}"
+
+          if [[ -z "$TOKENS_RAW" ]]; then
+            echo "COPILOT_GITHUB_TOKENS is not configured."
+            exit 1
+          fi
+
+          IFS=',' read -ra TOKENS <<< "$TOKENS_RAW"
+          echo "Loaded ${#TOKENS[@]} token(s) for Copilot review."
+
+          COPILOT_ARGS=(--allow-all)
+          if [[ -n "$COPILOT_MODEL" ]]; then
+            COPILOT_ARGS+=(--model "$COPILOT_MODEL")
+          fi
+
+          SUCCESS=0
+          for TOKEN in "${TOKENS[@]}"; do
+            TOKEN_TRIMMED="$(echo "$TOKEN" | xargs)"
+            if [[ -z "$TOKEN_TRIMMED" ]]; then
+              continue
+            fi
+
+            export COPILOT_GITHUB_TOKEN="$TOKEN_TRIMMED"
+            echo "Running Copilot review with token: ${TOKEN_TRIMMED:0:10}... (truncated)"
+
+            set +e
+            copilot "${COPILOT_ARGS[@]}" \
+              --prompt "/lambda-pr-review #${PR_NUMBER} --auto_push=true --context \"CI mode. Max comments from REVIEW_MAX_ISSUES.\""
+            COPILOT_STATUS=$?
+            set -e
+
+            echo "Copilot CLI exit code: $COPILOT_STATUS"
+            if [[ "$COPILOT_STATUS" -ne 0 ]]; then
+              echo "Copilot CLI failed, trying next token..."
+              continue
+            fi
+
+            SUCCESS=1
+            break
+          done
+
+          if [[ "$SUCCESS" -eq 0 ]]; then
+            echo "All tokens failed or exceeded quota."
+            exit 1
+          fi
+        env:
+          COPILOT_GITHUB_TOKENS: ${{ secrets.COPILOT_GITHUB_TOKENS }}
+          COPILOT_MODEL: ${{ vars.COPILOT_MODEL }}
+          REVIEW_MAX_ISSUES: ${{ vars.REVIEW_MAX_ISSUES }}
+          GITHUB_TOKEN: ${{ github.token }}

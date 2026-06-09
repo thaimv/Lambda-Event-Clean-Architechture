@@ -1,0 +1,7 @@
+# Official postgres image supports arm64 (Apple Silicon); postgis/postgis is amd64-only.
+FROM postgres:18-bookworm
+
+# Install pgtap extension
+RUN apt-get update && \
+    apt-get install -y postgresql-18-pgtap && \
+    rm -rf /var/lib/apt/lists/*

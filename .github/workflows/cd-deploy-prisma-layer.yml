@@ -1,0 +1,165 @@
+name: LambdaEvents CD — Deploy Prisma Layer
+
+on:
+  workflow_call:
+    inputs:
+      target_env:
+        description: GitHub Environment name
+        required: true
+        type: string
+      prisma_layer_zip:
+        description: Prisma layer zip filename
+        required: true
+        type: string
+      keep_layer_versions:
+        description: Number of published layer versions to retain
+        required: false
+        type: string
+        default: '5'
+
+jobs:
+  deploy-prisma-layer:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    environment: ${{ inputs.target_env }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Compute Prisma layer fingerprint
+        id: fingerprint
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SCHEMA="app/lambda/layer/prisma/schema.prisma"
+          MODEL_VERSION=$(grep -m1 'Data model version' "${SCHEMA}" \
+            | sed -E 's/^[[:space:]]*\/\/\/[[:space:]]*Data model version[[:space:]]*:[[:space:]]*//;s/[[:space:]]*$//')
+          PRISMA_CLIENT=$(grep -A3 '"node_modules/@prisma/client":' package-lock.json \
+            | grep '"version"' | head -1 | sed -E 's/.*"version": "([^"]+)".*/\1/')
+          BINARY_TARGETS=$(grep 'binaryTargets' "${SCHEMA}" \
+            | grep -oE '"[^"]+"' | tr '\n' ',' | sed 's/,$//' | tr -d '"')
+
+          FINGERPRINT="model=${MODEL_VERSION}|client=${PRISMA_CLIENT}|targets=${BINARY_TARGETS}"
+          echo "Prisma layer fingerprint: ${FINGERPRINT}"
+          echo "fingerprint=${FINGERPRINT}" >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Decide whether Prisma layer deploy is needed
+        id: detect
+        shell: bash
+        env:
+          PRISMA_LAYER_NAME: ${{ vars.PRISMA_LAYER_NAME }}
+          FINGERPRINT: ${{ steps.fingerprint.outputs.fingerprint }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${PRISMA_LAYER_NAME}" ]]; then
+            echo "PRISMA_LAYER_NAME is not set on GitHub Environment — skip Prisma layer deploy."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          DEPLOYED_FINGERPRINT=$(aws lambda list-layer-versions \
+            --layer-name "${PRISMA_LAYER_NAME}" \
+            --max-items 1 \
+            --query 'LayerVersions[0].Description' \
+            --output text 2>/dev/null || echo "none")
+
+          if [[ "${DEPLOYED_FINGERPRINT}" == "None" || -z "${DEPLOYED_FINGERPRINT}" ]]; then
+            DEPLOYED_FINGERPRINT="none"
+          fi
+
+          echo "Deployed layer fingerprint: ${DEPLOYED_FINGERPRINT}"
+
+          if [[ "${FINGERPRINT}" == "${DEPLOYED_FINGERPRINT}" ]]; then
+            echo "Prisma layer already matches schema fingerprint — skip deploy."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Prisma layer fingerprint changed — deploy required."
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install system tools (zip)
+        if: steps.detect.outputs.changed == 'true'
+        run: sudo apt-get update -y && sudo apt-get install -y zip
+
+      - name: Prepare Prisma Lambda layer
+        if: steps.detect.outputs.changed == 'true'
+        run: bash deploy/scripts/001_prepare-prisma-layer.sh
+
+      - name: Publish Prisma layer and attach to Lambdas
+        if: steps.detect.outputs.changed == 'true'
+        shell: bash
+        env:
+          PRISMA_LAYER_NAME: ${{ vars.PRISMA_LAYER_NAME }}
+          LAMBDA_FUNCTION_DELETE_USER_NAME: ${{ vars.LAMBDA_FUNCTION_DELETE_USER_NAME }}
+          LAMBDA_FUNCTION_JWT_AUTHORIZER_NAME: ${{ vars.LAMBDA_FUNCTION_JWT_AUTHORIZER_NAME }}
+          FINGERPRINT: ${{ steps.fingerprint.outputs.fingerprint }}
+        run: |
+          set -euo pipefail
+
+          LAYER_ARN=$(aws lambda publish-layer-version \
+            --layer-name "${PRISMA_LAYER_NAME}" \
+            --zip-file "fileb://layers/prisma/${{ inputs.prisma_layer_zip }}" \
+            --compatible-runtimes nodejs22.x \
+            --description "${FINGERPRINT}" \
+            --query LayerVersionArn \
+            --output text)
+          echo "Published layer: ${LAYER_ARN}"
+
+          attach_layer() {
+            local function_name="$1"
+            local existing_layers merged=()
+
+            existing_layers=$(aws lambda get-function-configuration \
+              --function-name "${function_name}" \
+              --query 'Layers[].Arn' \
+              --output text 2>/dev/null || true)
+
+            if [[ -n "${existing_layers}" && "${existing_layers}" != "None" ]]; then
+              for arn in ${existing_layers}; do
+                if [[ "${arn}" != *":layer:${PRISMA_LAYER_NAME}:"* ]]; then
+                  merged+=("${arn}")
+                fi
+              done
+            fi
+
+            merged+=("${LAYER_ARN}")
+
+            echo "Attaching Prisma layer to ${function_name} ..."
+            aws lambda update-function-configuration \
+              --function-name "${function_name}" \
+              --layers "${merged[@]}"
+            aws lambda wait function-updated \
+              --function-name "${function_name}"
+          }
+
+          for function_name in \
+            "${LAMBDA_FUNCTION_DELETE_USER_NAME}" \
+            "${LAMBDA_FUNCTION_JWT_AUTHORIZER_NAME}"; do
+            if [[ -n "${function_name}" ]]; then
+              attach_layer "${function_name}"
+            fi
+          done
+
+      - name: Delete old Prisma layer versions
+        if: steps.detect.outputs.changed == 'true'
+        continue-on-error: true
+        shell: bash
+        env:
+          PRISMA_LAYER_NAME: ${{ vars.PRISMA_LAYER_NAME }}
+          KEEP_LAYER_VERSIONS: ${{ inputs.keep_layer_versions }}
+        run: |
+          set -euo pipefail
+          KEEP="${KEEP_LAYER_VERSIONS:-5}"
+          bash deploy/scripts/005_delete-old-layer-versions.sh "${PRISMA_LAYER_NAME}" "${KEEP}"

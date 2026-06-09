@@ -1,0 +1,10 @@
+name: lambda-event-impl
+version: 1.0.0
+description: Implement an event-driven Lambda function from a detail design document.
+input: /lambda-event-impl {path-to-detail-design.md}
+output: Lambda source code under app/lambda/src/<name>/ and simulator files under out/simulator/
+script: none
+templates: none
+context_budget: none
+prev_skill: lambda-event-design
+next_skill: lambda-spec-review

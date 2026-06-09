@@ -1,0 +1,62 @@
+name: LambdaEvents CD — Build
+
+on:
+  workflow_call:
+    inputs:
+      lambdas_config:
+        description: JSON array of Lambdas to build — [{name, zip, runtime?}]
+        required: true
+        type: string
+      build_artifact_name:
+        description: Single artifact name containing all staged Lambda packages
+        required: true
+        type: string
+    outputs:
+      target_env:
+        description: GitHub Environment name (event-develop | event-staging)
+        value: ${{ jobs.build.outputs.target_env }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      target_env: ${{ steps.set-env.outputs.target_env }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Select environment by branch
+        id: set-env
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF_NAME}" == "staging" || "${GITHUB_REF_NAME}" == "master" ]]; then
+            echo "target_env=event-staging" >> "$GITHUB_OUTPUT"
+          else
+            echo "target_env=event-develop" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install system tools (jq, zip)
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y jq zip
+
+      - name: Clean install
+        run: npm ci
+
+      - name: Build and package Lambdas
+        shell: bash
+        env:
+          LAMBDAS_CONFIG: ${{ inputs.lambdas_config }}
+        run: bash deploy/scripts/003_build-lambdas-from-config.sh "${LAMBDAS_CONFIG}"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v5
+        with:
+          name: ${{ inputs.build_artifact_name }}
+          path: artifacts/

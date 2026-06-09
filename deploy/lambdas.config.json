@@ -1,0 +1,4 @@
+[
+  { "name": "delete-user", "zip": "delete-user.zip" },
+  { "name": "jwt-authorizer", "zip": "jwt-authorizer.zip" }
+]

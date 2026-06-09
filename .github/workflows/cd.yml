@@ -1,0 +1,160 @@
+name: LambdaEvents CD
+
+# Orchestrator — project-specific config lives here (like LambdaAPIs cd.yml).
+# Reusable workflows (cd-*.yml) are generic: pass resolved values via with:.
+#
+# Constants (literal in with:):
+#   BUILD_ARTIFACT_NAME     = lambda-build-artifacts
+#   PRISMA_LAYER_ZIP        = prisma-layer.zip
+#   ELASTICACHE_LAYER_ZIP   = elasticache-layer.zip
+#
+# GitHub Environments: event-develop (branch develop) | event-staging (staging | master)
+#
+# Required Environment secret:  AWS_ROLE_TO_ASSUME
+# Required Environment vars:     AWS_REGION, AWS_ACCOUNT_ID, LAMBDA_ALIAS_NAME,
+#   LAMBDA_FUNCTION_DELETE_USER_NAME, LAMBDA_FUNCTION_JWT_AUTHORIZER_NAME, STEP_FUNCTION_DELETE_USER_BATCH_NAME
+# Optional vars:                 KEEP_LAMBDA_VERSIONS, PRISMA_LAYER_NAME,
+#   ELASTICACHE_LAYER_NAME
+#
+# Add a Lambda:
+#   1. Append {"name":"...","zip":"....zip"} to lambdas_config below
+#   2. Add output in resolve-env + copy a deploy-* job block
+#   3. Add npm script build:<name> in package.json
+
+on:
+  push:
+    branches:
+      - develop
+      - staging
+      - master
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  build:
+    uses: ./.github/workflows/cd-build.yml
+    with:
+      build_artifact_name: lambda-build-artifacts
+      lambdas_config: |
+        [
+          { "name": "delete-user", "zip": "delete-user.zip" },
+          { "name": "jwt-authorizer", "zip": "jwt-authorizer.zip" }
+        ]
+
+  resolve-env:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: ${{ needs.build.outputs.target_env }}
+    outputs:
+      lambda_function_delete_user_name: ${{ steps.cfg.outputs.lambda_function_delete_user_name }}
+      lambda_function_jwt_authorizer_name: ${{ steps.cfg.outputs.lambda_function_jwt_authorizer_name }}
+      lambda_alias_name: ${{ steps.cfg.outputs.lambda_alias_name }}
+      keep_lambda_versions: ${{ steps.cfg.outputs.keep_lambda_versions }}
+      stepfunctions_config: ${{ steps.sf.outputs.config }}
+    steps:
+      - name: Resolve GitHub Environment config
+        id: cfg
+        env:
+          FN_DELETE_USER: ${{ vars.LAMBDA_FUNCTION_DELETE_USER_NAME }}
+          FN_JWT_AUTHORIZER: ${{ vars.LAMBDA_FUNCTION_JWT_AUTHORIZER_NAME }}
+          ALIAS_NAME: ${{ vars.LAMBDA_ALIAS_NAME }}
+          KEEP_VERSIONS: ${{ vars.KEEP_LAMBDA_VERSIONS }}
+        run: |
+          set -euo pipefail
+          missing=()
+          [[ -z "${FN_DELETE_USER}" ]] && missing+=("LAMBDA_FUNCTION_DELETE_USER_NAME")
+          [[ -z "${FN_JWT_AUTHORIZER}" ]] && missing+=("LAMBDA_FUNCTION_JWT_AUTHORIZER_NAME")
+          [[ -z "${ALIAS_NAME}" ]] && missing+=("LAMBDA_ALIAS_NAME")
+          if [[ "${#missing[@]}" -gt 0 ]]; then
+            echo "Missing GitHub Environment variables: ${missing[*]}" >&2
+            echo "Create environment '${{ needs.build.outputs.target_env }}' and set required vars (see README.md)." >&2
+            exit 1
+          fi
+          echo "lambda_function_delete_user_name=${FN_DELETE_USER}" >> "$GITHUB_OUTPUT"
+          echo "lambda_function_jwt_authorizer_name=${FN_JWT_AUTHORIZER}" >> "$GITHUB_OUTPUT"
+          echo "lambda_alias_name=${ALIAS_NAME}" >> "$GITHUB_OUTPUT"
+          echo "keep_lambda_versions=${KEEP_VERSIONS:-5}" >> "$GITHUB_OUTPUT"
+
+      - name: Build Step Functions deploy config
+        id: sf
+        env:
+          DELETE_USER_FN: ${{ vars.LAMBDA_FUNCTION_DELETE_USER_NAME }}
+          STATE_MACHINE_NAME: ${{ vars.STEP_FUNCTION_DELETE_USER_BATCH_NAME }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${STATE_MACHINE_NAME}" ]]; then
+            echo "STEP_FUNCTION_DELETE_USER_BATCH_NAME not set — skip Step Functions deploy config."
+            echo 'config=[]' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          CONFIG=$(jq -n \
+            --arg sm "${STATE_MACHINE_NAME}" \
+            --arg df "app/stepfunction/workflows/delete-user-batch/workflow.json" \
+            --arg fn "${DELETE_USER_FN}" \
+            '[{
+              state_machine_name: $sm,
+              definition_file: $df,
+              lambda_placeholders: {"delete-user": $fn}
+            }]')
+
+          {
+            echo 'config<<EOF'
+            echo "${CONFIG}"
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
+  deploy-prisma-layer:
+    needs: [build, resolve-env]
+    secrets: inherit
+    uses: ./.github/workflows/cd-deploy-prisma-layer.yml
+    with:
+      target_env: ${{ needs.build.outputs.target_env }}
+      prisma_layer_zip: prisma-layer.zip
+      keep_layer_versions: ${{ needs.resolve-env.outputs.keep_lambda_versions }}
+
+  deploy-elasticache-layer:
+    needs: [build, resolve-env]
+    secrets: inherit
+    uses: ./.github/workflows/cd-deploy-elasticache-layer.yml
+    with:
+      target_env: ${{ needs.build.outputs.target_env }}
+      elasticache_layer_zip: elasticache-layer.zip
+      keep_layer_versions: ${{ needs.resolve-env.outputs.keep_lambda_versions }}
+
+  deploy-delete-user:
+    needs: [build, resolve-env, deploy-prisma-layer]
+    secrets: inherit
+    uses: ./.github/workflows/cd-deploy-lambda.yml
+    with:
+      target_env: ${{ needs.build.outputs.target_env }}
+      build_artifact_name: lambda-build-artifacts
+      artifact_name: delete-user
+      zip_file: delete-user.zip
+      function_name: ${{ needs.resolve-env.outputs.lambda_function_delete_user_name }}
+      alias_name: ${{ needs.resolve-env.outputs.lambda_alias_name }}
+      keep_lambda_versions: ${{ needs.resolve-env.outputs.keep_lambda_versions }}
+
+  deploy-jwt-authorizer:
+    needs: [build, resolve-env, deploy-elasticache-layer]
+    secrets: inherit
+    uses: ./.github/workflows/cd-deploy-lambda.yml
+    with:
+      target_env: ${{ needs.build.outputs.target_env }}
+      build_artifact_name: lambda-build-artifacts
+      artifact_name: jwt-authorizer
+      zip_file: jwt-authorizer.zip
+      function_name: ${{ needs.resolve-env.outputs.lambda_function_jwt_authorizer_name }}
+      alias_name: ${{ needs.resolve-env.outputs.lambda_alias_name }}
+      keep_lambda_versions: ${{ needs.resolve-env.outputs.keep_lambda_versions }}
+
+  deploy-stepfunctions:
+    needs: [build, resolve-env, deploy-delete-user]
+    if: ${{ needs.resolve-env.outputs.stepfunctions_config != '[]' && needs.resolve-env.outputs.stepfunctions_config != '' }}
+    secrets: inherit
+    uses: ./.github/workflows/cd-deploy-stepfunctions.yml
+    with:
+      target_env: ${{ needs.build.outputs.target_env }}
+      stepfunctions_config: ${{ needs.resolve-env.outputs.stepfunctions_config }}
