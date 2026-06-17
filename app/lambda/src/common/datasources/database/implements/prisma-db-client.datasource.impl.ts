@@ -1,8 +1,10 @@
 import { DI } from '@common/constants/di.const';
-import { RESULT_CODE } from '@common/constants/response.const';
+import { ERROR_MESSAGE, RESULT_CODE } from '@common/constants/response.const';
 import type { IDBClientDatasource } from '@common/datasources/database/db-client.datasource';
 import type { ISecretsManagerDatasource } from '@common/datasources/secrets-manager/secrets-manager.datasource';
+import { DatabaseUrlNotFoundError } from '@common/errors/database-url-notfound-error';
 import { InternalServerError } from '@common/errors/internal-server-error';
+import { SecretsNotFoundError } from '@common/errors/secrets-notfound-error';
 import { logger } from '@common/logger';
 import type { DatabaseSecrets } from '@common/types/datasources/database.type';
 import type { DatabaseClient } from '@common/types/datasources/database.type';
@@ -138,6 +140,14 @@ export class PrismaDBClientDatasource implements IDBClientDatasource {
         dbUrl: dbConfig.dbUrl,
         dbUrlReplica: dbConfig.dbUrlReplica,
       };
+    }
+
+    if (!this.appConfig.secretManagerKeys.RDS_SECRET_ARN) {
+      throw new SecretsNotFoundError(ERROR_MESSAGE.SECRETS_NOT_FOUND);
+    }
+
+    if (!dbConfig.proxyEndpoint) {
+      throw new DatabaseUrlNotFoundError(ERROR_MESSAGE.DATABASE_URL_NOT_FOUND);
     }
 
     const dbSecretsVal = await this.secretsManager.getSecretValue<DatabaseSecrets>({

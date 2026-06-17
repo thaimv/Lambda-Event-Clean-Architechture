@@ -1,4 +1,5 @@
 import { APP_CONST } from '@common/constants/app.const';
+import { ERROR_MESSAGE } from '@common/constants/response.const';
 import { PrismaDBClientDatasource } from '@common/datasources/database/implements/prisma-db-client.datasource.impl';
 import type { ISecretsManagerDatasource } from '@common/datasources/secrets-manager/secrets-manager.datasource';
 import { InternalServerError } from '@common/errors/internal-server-error';
@@ -135,6 +136,47 @@ describe('PrismaDBClientDatasource', () => {
     await devClient.getClient();
 
     expect(devSecretsManager.getSecretValue).toHaveBeenCalledOnce();
+  });
+
+  it('throws SecretsNotFoundError when RDS_SECRET_ARN is missing in non-local env', async () => {
+    const devSecretsManager = { getSecretValue: vi.fn() };
+    const devClient = new PrismaDBClientDatasource(
+      createMockAppConfig({
+        nodeEnv: APP_CONST.ENVIRONMENTS.DEV,
+        rdsSecretArn: '',
+        proxyEndpoint: 'proxy.example.com',
+      }),
+      devSecretsManager,
+    );
+
+    await expect(
+      (devClient as unknown as { getDbUrls: () => Promise<unknown> }).getDbUrls(),
+    ).rejects.toMatchObject({
+      message: ERROR_MESSAGE.SECRETS_NOT_FOUND,
+      code: 'ES-002',
+    });
+    expect(devSecretsManager.getSecretValue).not.toHaveBeenCalled();
+  });
+
+  it('throws DatabaseUrlNotFoundError when proxyEndpoint is missing in non-local env', async () => {
+    const devSecretsManager = { getSecretValue: vi.fn() };
+    const devClient = new PrismaDBClientDatasource(
+      createMockAppConfig({
+        nodeEnv: APP_CONST.ENVIRONMENTS.DEV,
+        rdsSecretArn: 'arn:aws:secretsmanager:secret',
+        proxyEndpoint: '',
+        proxyEndpointReplica: '',
+      }),
+      devSecretsManager,
+    );
+
+    await expect(
+      (devClient as unknown as { getDbUrls: () => Promise<unknown> }).getDbUrls(),
+    ).rejects.toMatchObject({
+      message: ERROR_MESSAGE.DATABASE_URL_NOT_FOUND,
+      code: 'ES-003',
+    });
+    expect(devSecretsManager.getSecretValue).not.toHaveBeenCalled();
   });
 
   it('throws InternalServerError after max connection retries', async () => {
